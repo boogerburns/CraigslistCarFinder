@@ -1,233 +1,21 @@
-'''
+"""
 @Author: Harry Margalotti
 @Created: 6/28/19
 @Purpose: Search craigslist for used cars matching user criteria
-'''
+"""
+
+import datetime
 import smtplib
 import time
 import requests
 from bs4 import BeautifulSoup as bs4
 import csv
+from yamlconfig import YamlConfig
+import os
+import argparse
 
 
-def timeConvert(miliTime):
-    hours, minutes = miliTime.split(":")
-    hours, minutes = int(hours), int(minutes)
-    setting = "AM"
-    if hours > 12:
-        setting = "PM"
-        hours -= 12
-    return ("%02d:%02d" + setting) % (hours, minutes)
-
-
-def getDetailsRaw(carLink):
-    try:
-        rsp = requests.get(carLink)
-        html = bs4(rsp.text, 'html.parser')
-        attrs = html.findAll("p", {"class": "attrgroup"})
-        price = html.findAll("span", {"class": "price"})
-        priceStart = str(price[0]).find("$")
-        priceEnd = str(price[0]).rfind("<")
-        pricefinal = str(price[0])[priceStart:priceEnd]
-
-        postDateData = html.findAll("time", {"class": "date timeago"})
-        # print(postDateData)
-        postDateStart = str(postDateData[0]).find('">') + 2
-        postDateEnd = str(postDateData[0]).rfind("</time>")
-        postDate = str(postDateData[0])[postDateStart:postDateEnd]
-        time = postDate.split()
-
-        newTime = timeConvert(time[1])
-
-        newDateTime = " " + str(time[0]) + " " + str(newTime)
-        return attrs, pricefinal, newDateTime
-    except:
-        print("Issue finding post: it may have been deleted")
-
-
-def sendInquiry(recipient, car):
-    fromaddr = '@gmail.com'
-    username = '@gmail.com'
-    password = ''
-    server = smtplib.SMTP('smtp.gmail.com:587')
-    server.ehlo()
-    server.starttls()
-    server.login(username, password)
-
-    msg2 = "Hi, I saw your post about the " + car + ", and was wondering if it is still available?"
-    msg = "\r\n".join([
-        "From: " + fromaddr,
-        "To: " + ",".join(fromaddr),
-        "Subject: " + car,
-        msg2
-    ])
-    server.sendmail(fromaddr, fromaddr, msg)
-    server.quit()
-
-
-def checkDeal(condition, cylinders, drive, fuel, odometer, paint, size, titleStatus, trans, type, year):
-    doIWantIt = False
-
-    conditionsIWant = ['new', 'good', 'like new', 'excellent']
-    milesIWant = 108000
-    colorIWant = ['black', 'blue', 'grey', 'red', 'silver', 'white', 'custom']
-    titleStatusIWant = 'clean'
-    transmissionIWant = "automatic"
-    typeIWant = ['sedan', 'coupe', 'SUV']
-    yearIWant = 2007
-    if condition.lower() in conditionsIWant:
-
-        if int(odometer) <= milesIWant:
-
-            if paint in colorIWant:
-
-                if titleStatus.lower() == titleStatusIWant:
-
-                    if trans == transmissionIWant:
-
-                        if type in typeIWant:
-                            try:
-                                if int(year) >= yearIWant:
-                                    doIWantIt = True
-                            except:
-                                print("Year uncertain, inquiry not sent. \n"
-                                      "Year might be: ", year)
-    return doIWantIt
-
-
-def checkIfReplied(title, carLink, condition, drive, fuel, odometer, paint, size, titleStatus, trans, type, year,
-                   cylinders):
-    with open('deals.csv', newline='') as csvfile:
-        dealreader = csv.reader(csvfile, delimiter=' ', quotechar='|')
-        x = 0
-        for row in dealreader:
-            if x > 0:
-                for x in range(len(row)):
-                    if row[0] == title:
-                        if row[2] == condition:
-                            if row[3] == drive:
-                                if row[4] == fuel:
-                                    if (row[5] == odometer):
-                                        if row[6] == paint:
-                                            if row[9] == trans:
-                                                if row[10] == type:
-                                                    if row[11] == year:
-                                                        if row[12] == cylinders:
-                                                            return True
-            x += 1
-        return True
-
-
-def logDeal(title, carlink, condition, drive, fuel, odometer, paint, size, titleStatus, trans, type, year, cylinders):
-    with open('deals.csv', mode='a') as deals_file:
-        deal_writer = csv.writer(deals_file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-        rowtoLog = [title, carlink, condition, drive, fuel, odometer, paint, size, titleStatus, trans, type, year,
-                    cylinders]
-        deal_writer.writerow(rowtoLog)
-
-
-def parseDetails(cars, html):
-    for x in range(len(cars)):
-        time.sleep(1)  # I put this sleep in so craigslist doesnt freak out about too many requests
-        link = html.findAll("a", {"class": "result-title hdrlnk"})
-
-        # direct link to a cars post
-        carlink = str(link[x])[str(link[x]).find("href=") + 6:str(link[x]).rfind('">')]
-
-        print("-" * 200)
-
-        print(carlink)
-
-        # This returns the details in a list of size 2, and parses out the price and post date
-
-        details, price, postDate = getDetailsRaw(carlink)
-
-        print("\n", postDate, "\n")
-
-        condition, titleStatus, drive, fuel, odometer, paint, size, trans, type, cylinders, year, title = '', '', '', '', '', '', '', '', '', '', '', ''
-
-        for i in range(len(details)):
-            if (i == 0):  # index 0 is always the title
-                titlestart = str(details[i]).find("<b>") + 3
-                titleend = str(details[i]).rfind("</b>")
-                title = str(details[i])[titlestart:titleend]
-            elif (i == 1):  # index 2 is the rest of the details
-                # now we split the rest of the details into their own list
-                details2 = str(details[i]).split("<br/>")
-
-                # The details list can vary in order depending on if it includes things such as the VIN.
-                # So the best way to handle this was to check if the keyword exists within the raw html
-                for y in range(len(details2)):
-                    if ("condition" in str(details2[y]).lower()):
-                        # now we can see that the text we want is within <b> </b> so we can use string slicing to get it
-                        conditionstart = str(details2[y]).find("<b>") + 3
-                        conditionend = str(details2[y]).rfind("</b>")
-                        condition = str(details2[y])[conditionstart:conditionend]
-                    elif ("cylinder" in str(details2[y]).lower()):
-                        cylindersStart = str(details2[y]).find("<b>") + 3
-                        cylindersEnd = str(details2[y]).rfind("</b>")
-                        cylinders = str(details2[y])[cylindersStart:cylindersEnd]
-                    elif ("drive" in str(details2[y]).lower()):
-                        driveStart = str(details2[y]).find("<b>") + 3
-                        driveEnd = str(details2[y]).rfind("</b>")
-                        drive = str(details2[y])[driveStart:driveEnd]
-                    elif ("fuel" in str(details2[y]).lower()):
-                        fuelStart = str(details2[y]).find("<b>") + 3
-                        fuelEnd = str(details2[y]).rfind("</b>")
-                        fuel = str(details2[y])[fuelStart:fuelEnd]
-                    elif ("odometer" in str(details2[y]).lower()):
-                        odometerStart = str(details2[y]).find("<b>") + 3
-                        odometerEnd = str(details2[y]).rfind("</b>")
-                        odometer = str(details2[y])[odometerStart:odometerEnd]
-                    elif ("paint" in str(details2[y]).lower()):
-                        paintStart = str(details2[y]).find("<b>") + 3
-                        paintEnd = str(details2[y]).rfind("</b>")
-                        paint = str(details2[y])[paintStart:paintEnd]
-                    elif ("size" in str(details2[y]).lower()):
-                        sizeStart = str(details2[y]).find("<b>") + 3
-                        sizeEnd = str(details2[y]).rfind("</b>")
-                        size = str(details2[y])[sizeStart:sizeEnd]
-                    elif ("title" in str(details2[y]).lower()):
-                        titleStart = str(details2[y]).find("<b>") + 3
-                        titleEnd = str(details2[y]).rfind("</b>")
-                        titleStatus = str(details2[y])[titleStart:titleEnd]
-                    elif ("transmission" in str(details2[y]).lower()):
-                        transStart = str(details2[y]).find("<b>") + 3
-                        transEnd = str(details2[y]).rfind("</b>")
-                        trans = str(details2[y])[transStart:transEnd]
-                    elif ("type" in str(details2[y]).lower()):
-                        typeStart = str(details2[y]).find("<b>") + 3
-                        typeEnd = str(details2[y]).rfind("</b>")
-                        type = str(details2[y])[typeStart:typeEnd]
-
-        print("Car: ", title, "\t", "Cost: ", price)
-        cleanInfo = "Condition: " + condition + "\n" + "Cylinders: " + cylinders + "\n" + "Drive: " + drive + "\n" + "Fuel: " + fuel + "\n" + "Odometer: " + odometer + "\n" + "Color: " + paint + "\n" + "Size: " + size + "\n" + "Title Status: " + titleStatus + "\n" + "Transmission Type: " + trans + "\n" + "Type: " + type
-        print(cleanInfo)
-
-        year = title.lstrip()
-        year = year[0:5]
-        year = year.strip()
-
-        deal = checkDeal(condition, cylinders, drive, fuel, odometer, paint, size, titleStatus, trans, type, year)
-
-        if deal:
-            if not checkIfReplied(title, carlink, condition, drive, fuel, odometer, paint, size, titleStatus, trans,
-                                  type, year, cylinders):
-
-                logDeal(title, carlink, condition, drive, fuel, odometer, paint, size, titleStatus, trans, type, year,
-                        cylinders)
-
-                print("\n\n\n Possible Deal Found: Deal Logged \n\n\n")
-
-                # sendInquiry() this is commented out until bugs are fixed
-            else:
-                print("\n\n\n ALREADY REPLIED TO \n\n\n")
-        print("-" * 200)
-
-
-def main():
-    #should be something like https://nwct.craigslist.org/search/cto
-    url_base = ''
+MAIN_USAGE = """
     #FILTER BREAKDOWN:
     '''
     hasPic = 1/0: Only cars that have images with the listing 
@@ -331,13 +119,303 @@ def main():
          lien = 5
          missing = 6
     '''
+    """
+# lets make some config magic happen
+_CONFIG = {}
+# Return the config
+def get_config():
+    return _CONFIG
+
+
+# setup the config from the yaml config file
+def set_config():
+    global _CONFIG
+    if os.path.isfile(args.config_file):
+        _CONFIG.update(YamlConfig(args.config_file, None))
+    else:
+        raise Exception
+
+
+# destroy the config, cleaning it out
+def clear_config():
+    global _CONFIG
+    _CONFIG.clear()
+
+
+# lets add some command line arg parse magic while we're at it
+logname = '/var/log/craigslist/carfinder.' + datetime.datetime.now().strftime("%Y%m%d%H%M%S") + '.log'
+parser = argparse.ArgumentParser(usage=MAIN_USAGE)
+parser.add_argument('--configfile', default='/home/pi/craigslist/carfinder.conf')
+parser.add_argument('--logfile', default=logname)
+args = parser.parse_args()
+
+
+# we should really validate the arguments too
+def validate_args():
+    # no parms to check yet
+    return True
+
+
+def timeConvert(miliTime):
+    hours, minutes = miliTime.split(":")
+    hours, minutes = int(hours), int(minutes)
+    setting = "AM"
+    if hours > 12:
+        setting = "PM"
+        hours -= 12
+    return ("%02d:%02d" + setting) % (hours, minutes)
+
+
+def getDetailsRaw(carLink):
+    try:
+        rsp = requests.get(carLink)
+        html = bs4(rsp.text, 'html.parser')
+        attrs = html.findAll("p", {"class": "attrgroup"})
+        price = html.findAll("span", {"class": "price"})
+        priceStart = str(price[0]).find("$")
+        priceEnd = str(price[0]).rfind("<")
+        pricefinal = str(price[0])[priceStart:priceEnd]
+
+        postDateData = html.findAll("time", {"class": "date timeago"})
+        # print(postDateData)
+        postDateStart = str(postDateData[0]).find('">') + 2
+        postDateEnd = str(postDateData[0]).rfind("</time>")
+        postDate = str(postDateData[0])[postDateStart:postDateEnd]
+        time = postDate.split()
+
+        newTime = timeConvert(time[1])
+
+        newDateTime = " " + str(time[0]) + " " + str(newTime)
+        return attrs, pricefinal, newDateTime
+    except Exception:
+        print("Issue finding post: it may have been deleted")
+
+
+def sendInquiry(recipient, car):
+    #fromaddr = '@gmail.com'
+    #username = '@gmail.com'
+    #password = ''
+    #server = smtplib.SMTP('smtp.gmail.com:587')
+    try:
+        fromaddr = _CONFIG['carfinder']['email']['fromaddress']
+        username = _CONFIG['carfinder']['email']['username']
+        password = _CONFIG['carfinder']['email']['password']
+        serverconfig = _CONFIG['carfinder']['email']['host']
+    except Exception:
+        print ("Missing config for carfinder email enviroment")
+        raise Exception
+
+    server = smtplib.SMTP(serverconfig)
+    server.ehlo()
+    server.starttls()
+    server.login(username, password)
+
+    try:
+        msg2 = _CONFIG['carfinder']['email']['message']
+    except Exception:
+        msg2 = "Hi, I saw your post about the " + car + ", and was wondering if it is still available?"
+
+    msg = "\r\n".join([
+        "From: " + fromaddr,
+        "To: " + recipient,
+        "Subject: " + car,
+        msg2
+    ])
+    server.sendmail(fromaddr, fromaddr, msg)
+    server.quit()
+
+
+def checkDeal(condition, cylinders, drive, fuel, odometer, paint, size, titleStatus, trans, type, year):
+    doIWantIt = False
+    # Going to add these to the config file too
+    conditionsIWant = ['new', 'good', 'like new', 'excellent']
+    milesIWant = 108000
+    colorIWant = ['black', 'blue', 'grey', 'red', 'silver', 'white', 'custom']
+    titleStatusIWant = 'clean'
+    transmissionIWant = "automatic"
+    typeIWant = ['sedan', 'coupe', 'SUV']
+    yearIWant = 2007
+    if condition.lower() in conditionsIWant:
+
+        if int(odometer) <= milesIWant:
+
+            if paint in colorIWant:
+
+                if titleStatus.lower() == titleStatusIWant:
+
+                    if trans == transmissionIWant:
+
+                        if type in typeIWant:
+                            try:
+                                if int(year) >= yearIWant:
+                                    doIWantIt = True
+                            except:
+                                print("Year uncertain, inquiry not sent. \n"
+                                      "Year might be: ", year)
+    return doIWantIt
+
+
+def checkIfReplied(title, carLink, condition, drive, fuel, odometer, paint, size, titleStatus, trans, type, year,
+                   cylinders):
+    with open('deals.csv', newline='') as csvfile:
+        dealreader = csv.reader(csvfile, delimiter=' ', quotechar='|')
+        x = 0
+        for row in dealreader:
+            if x > 0:
+                for x in range(len(row)):
+                    if row[0] == title:
+                        if row[2] == condition:
+                            if row[3] == drive:
+                                if row[4] == fuel:
+                                    if row[5] == odometer:
+                                        if row[6] == paint:
+                                            if row[9] == trans:
+                                                if row[10] == type:
+                                                    if row[11] == year:
+                                                        if row[12] == cylinders:
+                                                            return True
+            x += 1
+        return True
+
+
+def logDeal(title, carlink, condition, drive, fuel, odometer, paint, size, titleStatus, trans, type, year, cylinders):
+    with open('deals.csv', mode='a') as deals_file:
+        deal_writer = csv.writer(deals_file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+        rowtoLog = [title, carlink, condition, drive, fuel, odometer, paint, size, titleStatus, trans, type, year,
+                    cylinders]
+        deal_writer.writerow(rowtoLog)
+
+
+def parseDetails(cars, html):
+    for x in range(len(cars)):
+        time.sleep(1)  # I put this sleep in so craigslist doesnt freak out about too many requests
+        link = html.findAll("a", {"class": "result-title hdrlnk"})
+
+        # direct link to a cars post
+        carlink = str(link[x])[str(link[x]).find("href=") + 6:str(link[x]).rfind('">')]
+
+        print("-" * 200)
+
+        print(carlink)
+
+        # This returns the details in a list of size 2, and parses out the price and post date
+
+        details, price, postDate = getDetailsRaw(carlink)
+
+        print("\n", postDate, "\n")
+
+        condition, titleStatus, drive, fuel, odometer, paint, size, trans, type, cylinders, year, title = '', '', '', '', '', '', '', '', '', '', '', ''
+
+        for i in range(len(details)):
+            if i == 0:  # index 0 is always the title
+                titlestart = str(details[i]).find("<b>") + 3
+                titleend = str(details[i]).rfind("</b>")
+                title = str(details[i])[titlestart:titleend]
+            elif i == 1:  # index 2 is the rest of the details
+                # now we split the rest of the details into their own list
+                details2 = str(details[i]).split("<br/>")
+
+                # The details list can vary in order depending on if it includes things such as the VIN.
+                # So the best way to handle this was to check if the keyword exists within the raw html
+                for y in range(len(details2)):
+                    if "condition" in str(details2[y]).lower():
+                        # now we can see that the text we want is within <b> </b> so we can use string slicing to get it
+                        conditionstart = str(details2[y]).find("<b>") + 3
+                        conditionend = str(details2[y]).rfind("</b>")
+                        condition = str(details2[y])[conditionstart:conditionend]
+                    elif "cylinder" in str(details2[y]).lower():
+                        cylindersStart = str(details2[y]).find("<b>") + 3
+                        cylindersEnd = str(details2[y]).rfind("</b>")
+                        cylinders = str(details2[y])[cylindersStart:cylindersEnd]
+                    elif "drive" in str(details2[y]).lower():
+                        driveStart = str(details2[y]).find("<b>") + 3
+                        driveEnd = str(details2[y]).rfind("</b>")
+                        drive = str(details2[y])[driveStart:driveEnd]
+                    elif "fuel" in str(details2[y]).lower():
+                        fuelStart = str(details2[y]).find("<b>") + 3
+                        fuelEnd = str(details2[y]).rfind("</b>")
+                        fuel = str(details2[y])[fuelStart:fuelEnd]
+                    elif "odometer" in str(details2[y]).lower():
+                        odometerStart = str(details2[y]).find("<b>") + 3
+                        odometerEnd = str(details2[y]).rfind("</b>")
+                        odometer = str(details2[y])[odometerStart:odometerEnd]
+                    elif "paint" in str(details2[y]).lower():
+                        paintStart = str(details2[y]).find("<b>") + 3
+                        paintEnd = str(details2[y]).rfind("</b>")
+                        paint = str(details2[y])[paintStart:paintEnd]
+                    elif "size" in str(details2[y]).lower():
+                        sizeStart = str(details2[y]).find("<b>") + 3
+                        sizeEnd = str(details2[y]).rfind("</b>")
+                        size = str(details2[y])[sizeStart:sizeEnd]
+                    elif "title" in str(details2[y]).lower():
+                        titleStart = str(details2[y]).find("<b>") + 3
+                        titleEnd = str(details2[y]).rfind("</b>")
+                        titleStatus = str(details2[y])[titleStart:titleEnd]
+                    elif "transmission" in str(details2[y]).lower():
+                        transStart = str(details2[y]).find("<b>") + 3
+                        transEnd = str(details2[y]).rfind("</b>")
+                        trans = str(details2[y])[transStart:transEnd]
+                    elif "type" in str(details2[y]).lower():
+                        typeStart = str(details2[y]).find("<b>") + 3
+                        typeEnd = str(details2[y]).rfind("</b>")
+                        type = str(details2[y])[typeStart:typeEnd]
+
+        print("Car: ", title, "\t", "Cost: ", price)
+        cleanInfo = "Condition: " + condition + "\n" + "Cylinders: " + cylinders + "\n" + "Drive: " + drive + "\n" + "Fuel: " + fuel + "\n" + "Odometer: " + odometer + "\n" + "Color: " + paint + "\n" + "Size: " + size + "\n" + "Title Status: " + titleStatus + "\n" + "Transmission Type: " + trans + "\n" + "Type: " + type
+        print(cleanInfo)
+
+        year = title.lstrip()
+        year = year[0:5]
+        year = year.strip()
+
+        deal = checkDeal(condition, cylinders, drive, fuel, odometer, paint, size, titleStatus, trans, type, year)
+
+        if deal:
+            if not checkIfReplied(title, carlink, condition, drive, fuel, odometer, paint, size, titleStatus, trans,
+                                  type, year, cylinders):
+
+                logDeal(title, carlink, condition, drive, fuel, odometer, paint, size, titleStatus, trans, type, year,
+                        cylinders)
+
+                print("\n\n\n Possible Deal Found: Deal Logged \n\n\n")
+
+                # sendInquiry() this is commented out until bugs are fixed
+            else:
+                print("\n\n\n ALREADY REPLIED TO \n\n\n")
+        print("-" * 200)
+
+
+
+
+def main():
+    # should be something like https://nwct.craigslist.org/search/cto
+    #url_base = ''
+    try:
+        url_base = _CONFIG['carfinder']['urlbase']
+    except Exception:
+        print ("URL Base is missing from config")
+        raise Exception
+
 
     #SAMPLE PARAMS DICTIONARY
     # params = dict(hasPic=1, postedToday=0, search_distance=25, postal='12345', max_price=5000, max_auto_miles=170000,
     #               auto_transmission=2,
     #               auto_bodytype={3, 10, 8})
 
-    params = dict()
+    # params = dict()
+    try:
+        hasPic = _CONFIG['carfinder']['carconfig']['haspic']
+        postedToday = _CONFIG['carfinder']['carconfig']['postedtoday']
+        search_distance = _CONFIG['carfinder']['carconfig']['searchradius']
+        postal = _CONFIG['carfinder']['carconfig']['zipcode']
+        max_price = _CONFIG['carfinder']['carconfig']['maxprice']
+        max_auto_miles = _CONFIG['carfinder']['carconfig']['maxmiles']
+        auto_transmission = _CONFIG['carfinder']['carconfig']['transmissiontype']
+        auto_bodytype = _CONFIG['carfinder']['carconfig']['bodytype']
+        params = dict(hasPic, postedToday, search_distance, postal, max_price, max_auto_miles, auto_transmission, auto_bodytype)
+    except Exception:
+        print ("Missing a config for the car to find")
+        raise Exception
 
     rsp = requests.get(url_base, params=params)
     # To check requests automatically created the right URL:
@@ -357,4 +435,6 @@ def main():
     parseDetails(cars, html)
 
 
+set_config()
+validate_args()
 main()
